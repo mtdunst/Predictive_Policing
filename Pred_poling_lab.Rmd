@@ -5,19 +5,7 @@ date: "10/21/2022"
 output: html_document
 ---
 
-We are going to run through the code base with just a couple variables in a model - in a slightly simplified workflow.
 
-Our learning goals for today are:
-
-1. Learn how to build spatial variables in a raster-like grid called a "fishnet"
-
-2. Learn how to run local Moran's I as a measure of local clustering
-
-3. Run a poisson regression to predict events measured in counts
-
-4. Compare model performance to Kernal Density as a "business-as-usual" alternative
-
-**Note that this code is different than the book - it has been updated and debugged to keep up with changes in packages and data sources used in this exercise. Please use this code as the basis for your homework, not the book code.**
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
@@ -42,11 +30,7 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 
 ```
 
-## Read in Data from Chicago
-
-This uses the Socrata package for some data sets.
-
-Note where we bring in burglary data - you will want to vary this part to do your homework!
+## Read in Vandalism Data from Chicago
 
 ```{r}
 policeDistricts <- 
@@ -82,9 +66,7 @@ chicagoBoundary <-
 
 Plotting point data and density
 
-> How do we analyze point data?
-
-> Are there other geometries useful to represent point locations?
+> Our outcome of interest in this study is a prediction of vandalism sites accurate to actual reported vandalism sites. We think that data collected on vandalism of property could contain selection bias for several reasons. One factor that could play a role in the reporting of property damage would be property ownership, with homeowners assumed to be more likely to notice and report vandalism than absentee who landlords, who may not notice or care as much to invest and repair the damage. It should be noticed as well that we sourced our data from the Chicago Police, so the vandalism reports recorded were from police calls. Different socioeconomic and racial groups may have different views on reporting property damage to police, with people of color, especially black people being disproportionately affected by police brutality in America, it is possible that vandalism is underreported by people of color and renters.
 
 ```{r fig.width=6, fig.height=4}
 # uses grid.arrange to organize independent plots
@@ -108,11 +90,6 @@ ggplot() +
 
 ## Creating a fishnet grid
 
-> What is a fishnet grid?
-
-The `{sf}` package offers really easy way to create fishnet grids using the `st_make_grid()` function. The `cellsize` argument allows you to set the size of the grid cells; in this case it is set to `500` meters. You may have to do some research on the spatial layers projection (using `st_crs()` to know what coordinate system you are in) to understand if you are in feet or meters. If you are using Longitude and Latitude, you will need to project the data to a projected coordinate system to get distance measurements.
-
-Examine the fishnet - the unique ID is crucial to building a data set!
 
 ```{r}
 ## using {sf} to create the grid
@@ -130,7 +107,7 @@ fishnet <-
 
 ### Aggregate points to the fishnet
 
-> How can we aggregate points into a fishnet grid?
+> In the figure below we map our data on 2017 property vandalism reports aggregated to a fishnet. A fishnet is a uniform grid of cells, in our case 500 meters each. By aggregating our data to uniformly sized shapes, we are avoiding a spatial error in which the aggregation is biased to certain boundaries. A common implementation of this spatial error is gerrymandering. Thus, our fishnet is a step to reduce bias in the prediction of vandalism.
 
 ```{r}
 ## add a value of 1 to each crime, sum them with aggregate
@@ -157,11 +134,12 @@ ggplot() +
 
 ## Modeling Spatial Features
 
-> What features would be helpful in predicting the location of burglaries?
->
-> What might these features be problematic?
->
-> hint: for all the reasons we learned in class
+> We choose two spatial features in addition to those presented in our lab. One such feature was vacant buildings. We chose this feature because we assumed that vacant buildings are viewed as lacking ownership or protection and are more vulnerable to damage as a result. It would make sense under this logic that vacant buildings would be more likely to be vandalized than owned and maintained buildings. We used point data from the Chicago Police Portal on vacant building locations.
+
+> Another variable we used was median household income from the American Community Survey. We chose this variable under the assumption that people with higher median income would be more likely to report vandalism because they likely wanted retribution for any damage of their property, which was probably higher in value than people with lower median household income. This data was aggregated by census tract, so unlike our vandalism and vacant buildings data, median household income was not in point form. Later we joined it to our fishnet with some manipulation. 
+
+> These features may be problematic for two reasons. One is that median household income is not point data, and is aggregated to census tracts which are not uniform in size or population, which may introduce spatial bias. Another reason is that vacancies and median household income were chosen for opposite reasoning. We assume vandalism to occur most on property with no value (vacancies are usually listed as $0 property value) but to be reported most on properties with higher value. This presents a contradiction.
+
 
 ```{r}
 ## only pulling a single variable for our model to keep it simple
@@ -213,25 +191,6 @@ CHI_demo.sf <-
 
 #### How we aggregate a feature to our fishnet
 
-This is an important chunk of code with some unfamiliar lines. The overall to assign the fishnet ID to each abandoned car point, group the points by fishnet ID and count them per ID, join that count back to the fishnet and then go from a long format to a wide format. We'll step through it:
-
-*   `st_join(fishnet, join=st_within)`
-*       spatially join `abandonCars` points to the `fishnet` polygon they are within by specifying `st_within`. This results in the `Abandoned_Cars` points being given the `uniqueID` of the fishnet grid cell that they are within.
-*   `st_drop_geometry()`
-*       drop the geometry attributes of the joined data so that we can do summaries on it without having to also calculate geometries which would be quite slow.
-*   `group_by(uniqueID, Legend)`
-*       we want to count the number of abandoned cars per fishnet, so we use `group_by` on the unique cell ID. We also include the `Legend` column, which is more useful if you are doing this one more than a single layer.
-*   `summarize(count = n())`
-*       use `summarize` to create a new field called `count` that will be the count of all abandoned cars per fishnet grid cell. The `n()` function returns the number within each group (i.e. `uniqueID`)
-*   `left_join(fishnet, ., by = "uniqueID")`
-*       join that summary back to spatial fishnet by the `uniqueID` field which is in both. Note the use of the `.` "dot operator" which is a stand in for the object being piped into the function (i.e. `left_join()`). We use this because we want the summaries to be the second argument of the join; not the first argument which is the dplyr default.
-*   `spread(Legend, count, fill=0)`
-*       "spread" from long to wide format and make a new column for each value of the `Legend` field. This also is more useful if there are multiple layers in the `Legend` column. Note the use of `fill=0` tells the function to fill in any fishnet cells without an abandoned car with a `0` instead of `NA`.
-*   `dplyr::select(-``<NA>``)`
-*       remove a `<NA>` column that was created because of the `NA` value in the `Legend` column when it was "spread"
-*   `ungroup()`
-*       Finally, ungroup the dataframe.
-
 ```{r}
 #Join count data
 vars_net <- abandonCars %>%
@@ -268,24 +227,23 @@ vars_net <- st_join(st_centroid(vars_net), CHI_demo.sf) %>%
 
 ## Nearest Neighbor Feature
 
-> Review: what is NN and what does `k` represent in this function?
+> 
 
 ```{r}
 # convenience to reduce length of function names.
 st_c    <- st_coordinates
 st_coid <- st_centroid
 
-## create NN from abandoned cars
+## create NN from abandoned cars and vacant buildings
 vars_net <- vars_net %>%
-    mutate(Abandoned_Cars.nn = nn_function(st_c(st_coid(vars_net)), 
-                                           st_c(abandonCars),
-                                           k = 3))
+    mutate(Abandoned_Cars.nn = nn_function(st_c(st_coid(vars_net)), st_c(abandonCars), k = 3)) %>% 
+  mutate(vacantBldgsNn = nn_function(st_c(st_coid(vars_net)), st_c(vacantBldgs), k = 3))
 ```
 
-> What changes if we make `k` a different number?
+
 
 ```{r}
-## Visualize the NN feature
+## Visualize the NN feature - abandoned cars
 vars_net.long.nn <- 
   dplyr::select(vars_net, ends_with(".nn")) %>%
     gather(Variable, value, -geometry)
@@ -293,8 +251,18 @@ vars_net.long.nn <-
 ggplot() +
       geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
       scale_fill_viridis(name="NN Distance") +
-      labs(title="Abandoned Car NN Distance") +
-      mapTheme()
+      labs(title="Abandoned Car NN Distance") #+
+      #mapTheme()
+
+## Visualize the NN feature - vacant buildings
+vars_net.longNn <- 
+  dplyr::select(vars_net, ends_with("Nn")) %>%
+    gather(Variable, value, -geometry)
+
+ggplot() +
+      geom_sf(data = vars_net.longNn, aes(fill=value),color=NA) +
+      scale_fill_viridis(name="NN Distance") +
+      labs(title="Vacant Building NN Distance")
 ```
 
 ## Join NN feature to our fishnet
@@ -304,7 +272,9 @@ Since the counts were aggregated to each cell by `uniqueID` we can use that to j
 ```{r}
 ## important to drop the geometry from joining features
 final_net <-
-  left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID") 
+  left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID")
+
+View(final_net)
 
 ```
 
@@ -390,6 +360,14 @@ for(i in vars){
 
 do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vandalism"))
 ```
+
+## Attempt to do the same thing with vacancies!!
+
+```{r}
+
+```
+
+
 
 ## Distance to Hot spot
 
