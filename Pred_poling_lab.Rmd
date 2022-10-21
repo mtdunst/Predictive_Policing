@@ -11,6 +11,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 
 library(tidyverse)
+library(ggplot2)
 library(sf)
 library(RSocrata)
 library(viridis)
@@ -228,9 +229,10 @@ vars_net <- st_join(st_centroid(vars_net), CHI_demo.sf) %>%
 
 ```{r}
 ggplot() +
-      geom_sf(data = vars_net, aes(fill=HH_inc), colour="#000000") +
-      scale_fill_viridis(name="Median Household Income") +
-      labs(title="Median Household Income")
+      geom_sf(data = vars_net, aes(color=HH_inc)) +
+      scale_color_viridis(name="Median Household Income") +
+      labs(title="Median Household Income") +
+  mapTheme()
 ```
 
 ## Nearest Neighbor Feature
@@ -256,21 +258,10 @@ vars_net.long.nn <-
   dplyr::select(vars_net, ends_with(".nn")) %>%
     gather(Variable, value, -geometry)
 
-ggplot() +
-      geom_sf(data = vars_net.long.nn, aes(fill=value),color=NA) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Abandoned Car NN Distance") #+
-      #mapTheme()
-
 ## Visualize the NN feature - vacant buildings
 vars_net.longNn <- 
   dplyr::select(vars_net, ends_with("Nn")) %>%
     gather(Variable, value, -geometry)
-
-ggplot() +
-      geom_sf(data = vars_net.longNn, aes(fill=value)) +
-      scale_fill_viridis(name="NN Distance") +
-      labs(title="Vacant Building NN Distance")
 ```
 
 ## Join NN feature to our fishnet
@@ -283,6 +274,24 @@ final_net <-
   left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID")
 
 View(final_net)
+
+grid.arrange(ncol=3,
+ggplot() +
+      geom_sf(data = final_net, aes(fill=HH_inc), color=NA) +
+      scale_fill_viridis(name="Med HH Income") +
+      labs(title="Median Household Income") +
+      mapTheme(),          
+ggplot() +
+      geom_sf(data = final_net, aes(fill=Abandoned_Cars.nn), color=NA) +
+      scale_fill_viridis(name="NN Distance") +
+      labs(title="Abandoned Car NN Distance") +
+      mapTheme(),
+ggplot() +
+      geom_sf(data = final_net, aes(fill=vacantBldgsNn), color=NA) +
+      scale_fill_viridis(name="NN Distance") +
+      labs(title="Vacant Building NN Distance") +
+  mapTheme()
+)
 
 ```
 
@@ -371,7 +380,7 @@ for(i in vars){
 do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vandalism"))
 ```
 
-## Attempt to do the same thing with vacancies!!
+## Attempt to do the same thing with vacancies
 
 ```{r}
 ## This is just for plotting
@@ -391,23 +400,33 @@ do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vand
 ```
 
 
-##Scatter plots...
+##Scatter plot comparing independent and dependent variables
 
 ```{r}
-#ggplot() +
-#  geom_point(data=final_net, x=as.numeric("HH_inc"), #y="countVandalism")
-
-plot(data=final_net, x="Vacant_Bldgs" , y="countVandalism")
+#library(ggpmisc)
+grid.arrange(ncol=2,
+ggplot(final_net, aes(x=Vacant_Bldgs, y=countVandalism)) +
+  geom_point(alpha=0.15) +
+  labs(title="Vacant Buildings vs. Vandalism Reports per Grid Square") +
+  ylab("# of Vandalism Reports") +
+  xlab("# of Vacant Buildings") +
+  geom_smooth(method='lm', formula= y~x, formula = my.formula),
+ggplot(final_net, aes(x=HH_inc, y=countVandalism)) +
+  geom_point(alpha=0.15) +
+  labs(title="Household Income vs. Vandalism Reports per Grid Square") +
+  ylab("# of Vandalism Reports") +
+  xlab("Median HH Income") +
+  geom_smooth(method='lm', formula= y~x))
 ```
 ##Histogram of our dependent variable
 ```{r}
-
+grid.arrange(ncol=2,
 ggplot(final_net, aes(countVandalism)) + 
-  geom_histogram(color="black", fill="white")
-
+  geom_histogram(color="black", fill="white"),
 ggplot(final_net, aes(log(countVandalism))) + 
-  geom_histogram(color="black", fill="white")
-#not good enough!
+  geom_histogram(color="black", fill="white"))
+
+#We could not find a transformation that made this variable normally-distributed, so we kept it as it is.
 ```
 
 
@@ -419,7 +438,7 @@ Using NN distance to a hot spot location
 # generates warning from NN
 final_net <- final_net %>% 
   mutate(abandoned.isSig = 
-           ifelse(local_morans[,5] <= 0.001, 1, 0)) %>%
+           ifelse(local_morans_ac[,5] <= 0.001, 1, 0)) %>%
   mutate(abandoned.isSig.dist = 
            nn_function(st_c(st_coid(final_net)),
                        st_c(st_coid(filter(final_net, 
@@ -498,6 +517,8 @@ reg.cv <-
 #reg.cv
 #reg.cv$resample[1:5,]
 
+library(data.table)
+
 MAE.cv = data.table(MAE.cv= reg.cv$resample[,3])
 ```
 
@@ -510,6 +531,13 @@ ggplot() +
   scale_fill_viridis(name="LOOCV MAE") +
       labs(title="MAE") +
       mapTheme()
+
+#Summarizing MAE and SD for each regression.
+
+stargazer(data=as.data.frame(error_by_reg_and_fold),type="text")
+
+stargazer(data=MAE.cv,type="text")
+
 ```
 
 ## Density vs predictions
@@ -653,3 +681,9 @@ rbind(vandal_KDE_sf, vandal_risk_sf) %>%
   theme_bw() +
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
 ```
+
+## Conclusion
+
+We believe that this algorithm outpaces the status quo method and should be put into production. The status quo method is based on kernel density (KDE) - a.k.a, predicting future events based on past events. Observing our bar plot above, you can see that the KDE predicts a larger amount of spatial areas to contain occurrences of vandalism that are outside the 80th-percentile than the model we have created. Our risk prediction model follows more closely to a normal distribution when plotted over percentiles of events.
+
+Our mean absolute error is around 2.6 vandalism reports. Considering that the mean number of vandalism reports per area is around 6, our error is not large enough to predict a false negative for an area. That means that law enforcement will be able to narrow down which areas to patrol for vandalism relatively well. While a useful model, in order to improve the predictions, the model could be changed to include more variables or transform our dependent variable to be normally distributed.
