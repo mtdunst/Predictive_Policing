@@ -138,7 +138,7 @@ ggplot() +
 
 > Another variable we used was median household income from the American Community Survey. We chose this variable under the assumption that people with higher median income would be more likely to report vandalism because they likely wanted retribution for any damage of their property, which was probably higher in value than people with lower median household income. This data was aggregated by census tract, so unlike our vandalism and vacant buildings data, median household income was not in point form. Later we joined it to our fishnet with some manipulation. 
 
-> These features may be problematic for two reasons. One is that median household income is not point data, and is aggregated to census tracts which are not uniform in size or population, which may introduce spatial bias. Another reason is that vacancies and median household income were chosen for opposite reasoning. We assume vandalism to occur most on property with no value (vacancies are usually listed as $0 property value) but to be reported most on properties with higher value. This presents a contradiction.
+> These features may be problematic for two reasons. One is that median household income is not point data, and is aggregated to census block groups which are not uniform in size or population, which may introduce spatial bias. Another reason is that vacancies and median household income were chosen for opposite reasoning. We assume vandalism to occur most on property with no value (vacancies are usually listed as $0 property value) but to be reported most on properties with higher value. This presents a contradiction.
 
 
 ```{r}
@@ -175,7 +175,7 @@ vacantBldgs <-
 ```{r}
 #Getting median HH income by Census tract
 CHI_demo.sf <- 
-  get_acs(geography = "tract", 
+  get_acs(geography = "block group", 
           variables = c("B19013_001E"), 
           year=2020, state=17, county=031, 
           geometry=TRUE, output="wide") %>%
@@ -224,6 +224,14 @@ vars_net <- st_join(st_centroid(vars_net), CHI_demo.sf) %>%
   dplyr::select(-`GEOID`)
 ```
 
+## Mapping Median Household Income data
+
+```{r}
+ggplot() +
+      geom_sf(data = vars_net, aes(fill=HH_inc), colour="#000000") +
+      scale_fill_viridis(name="Median Household Income") +
+      labs(title="Median Household Income")
+```
 
 ## Nearest Neighbor Feature
 
@@ -249,7 +257,7 @@ vars_net.long.nn <-
     gather(Variable, value, -geometry)
 
 ggplot() +
-      geom_sf(data = vars_net.long.nn, aes(fill=value), colour=NA) +
+      geom_sf(data = vars_net.long.nn, aes(fill=value),color=NA) +
       scale_fill_viridis(name="NN Distance") +
       labs(title="Abandoned Car NN Distance") #+
       #mapTheme()
@@ -260,7 +268,7 @@ vars_net.longNn <-
     gather(Variable, value, -geometry)
 
 ggplot() +
-      geom_sf(data = vars_net.longNn, aes(fill=value),color=NA) +
+      geom_sf(data = vars_net.longNn, aes(fill=value)) +
       scale_fill_viridis(name="NN Distance") +
       labs(title="Vacant Building NN Distance")
 ```
@@ -280,9 +288,6 @@ View(final_net)
 
 ### Join in areal data
 
-Using spatial joins to join *centroids* of fishnets to polygon for neighborhoods and districts.
-
-> What issues arise when we try to join polygons to polygons in space?
 
 ```{r}
 
@@ -301,15 +306,6 @@ final_net <-
 
 ## Local Moran's I for fishnet grid cells
 
-using {spdep} package to to build neighborhood weights and list to calculate local Moran's I.
-
-Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
-
-> What is the difference between local and global Moran's I?
-
-A little in depth version of the chunk below can be found:
-
-Mendez C. (2020). Spatial autocorrelation analysis in R. R Studio/RPubs. Available at <https://rpubs.com/quarcs-lab/spatial-autocorrelation>
 
 ```{r}
 ## generates warnings from PROJ issues
@@ -323,14 +319,28 @@ final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
 
 ```{r}
 ## see ?localmoran
-local_morans <- localmoran(final_net$Abandoned_Cars, final_net.weights, zero.policy=TRUE) %>% 
+local_morans_ac <- localmoran(final_net$Abandoned_Cars, final_net.weights, zero.policy=TRUE) %>% 
+  as.data.frame()
+
+local_morans_vb <- localmoran(final_net$Vacant_Bldgs, final_net.weights, zero.policy=TRUE) %>% 
   as.data.frame()
 
 # join local Moran's I results to fishnet
-final_net.localMorans <- 
-  cbind(local_morans, as.data.frame(final_net)) %>% 
+final_net.localMorans_ac <- 
+  cbind(local_morans_ac, as.data.frame(final_net)) %>% 
   st_sf() %>%
   dplyr::select(Abandoned_Cars_Count = Abandoned_Cars, 
+                Local_Morans_I = Ii, 
+                P_Value = `Pr(z != E(Ii))`) %>%
+  mutate(Significant_Hotspots = ifelse(P_Value <= 0.001, 1, 0)) %>%
+  gather(Variable, Value, -geometry)
+
+
+
+final_net.localMorans_vb <-
+   cbind(local_morans_vb, as.data.frame(final_net)) %>% 
+  st_sf() %>%
+  dplyr::select(Vacant_Bldgs_Count = Vacant_Bldgs, 
                 Local_Morans_I = Ii, 
                 P_Value = `Pr(z != E(Ii))`) %>%
   mutate(Significant_Hotspots = ifelse(P_Value <= 0.001, 1, 0)) %>%
@@ -346,13 +356,13 @@ This is a complex code chunk - it's a loop which builds ggplots of local Moran's
 
 ```{r}
 ## This is just for plotting
-vars <- unique(final_net.localMorans$Variable)
+vars <- unique(final_net.localMorans_ac$Variable)
 varList <- list()
 
 for(i in vars){
   varList[[i]] <- 
     ggplot() +
-      geom_sf(data = filter(final_net.localMorans, Variable == i), 
+      geom_sf(data = filter(final_net.localMorans_ac, Variable == i), 
               aes(fill = Value), colour=NA) +
       scale_fill_viridis(name="") +
       labs(title=i) +
@@ -364,9 +374,41 @@ do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vand
 ## Attempt to do the same thing with vacancies!!
 
 ```{r}
+## This is just for plotting
+vars <- unique(final_net.localMorans_vb$Variable)
+varList <- list()
 
+for(i in vars){
+  varList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(final_net.localMorans_vb, Variable == i), 
+              aes(fill = Value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme(title_size = 14) + theme(legend.position="bottom")}
+
+do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vandalism"))
 ```
 
+
+##Scatter plots...
+
+```{r}
+#ggplot() +
+#  geom_point(data=final_net, x=as.numeric("HH_inc"), #y="countVandalism")
+
+plot(data=final_net, x="Vacant_Bldgs" , y="countVandalism")
+```
+##Histogram of our dependent variable
+```{r}
+
+ggplot(final_net, aes(countVandalism)) + 
+  geom_histogram(color="black", fill="white")
+
+ggplot(final_net, aes(log(countVandalism))) + 
+  geom_histogram(color="black", fill="white")
+#not good enough!
+```
 
 
 ## Distance to Hot spot
@@ -408,7 +450,7 @@ Leave One Group Out CV on spatial features
 # View(crossValidate)
 
 ## define the variables we want
-reg.ss.vars <- c("Abandoned_Cars.nn", "abandoned.isSig.dist")
+reg.ss.vars <- c("Abandoned_Cars.nn", "abandoned.isSig.dist", "vacantBldgsNn","HH_inc")
 
 ## RUN REGRESSIONS
 reg.ss.spatialCV <- crossValidate(
@@ -441,6 +483,33 @@ error_by_reg_and_fold %>%
   scale_x_continuous(breaks = seq(0, 11, by = 1)) + 
     labs(title="Distribution of MAE", subtitle = "LOGO-CV",
          x="Mean Absolute Error", y="Count") 
+```
+## K-Fold Cross Validation
+
+```{r}
+fitControl <- trainControl(method = "cv", number = 100)
+set.seed(825)
+
+reg.cv <- 
+  train(countVandalism ~ ., data = st_drop_geometry(final_net) %>% 
+                                dplyr::select(countVandalism, all_of(reg.ss.vars)), 
+     method = "lm", trControl = fitControl, na.action = na.pass)
+
+#reg.cv
+#reg.cv$resample[1:5,]
+
+MAE.cv = data.table(MAE.cv= reg.cv$resample[,3])
+```
+
+
+## Mapping Error
+
+```{r}
+ggplot() +
+  geom_sf(data=error_by_reg_and_fold, aes(fill=MAE),color=NA) +
+  scale_fill_viridis(name="LOOCV MAE") +
+      labs(title="MAE") +
+      mapTheme()
 ```
 
 ## Density vs predictions
