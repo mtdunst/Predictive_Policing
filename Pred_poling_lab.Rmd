@@ -25,6 +25,8 @@ library(knitr)
 library(kableExtra)
 library(tidycensus)
 library(classInt)   # for KDE and ML risk class intervals
+library(caret)
+library(data.frame)
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
@@ -410,7 +412,7 @@ ggplot(final_net, aes(x=Vacant_Bldgs, y=countVandalism)) +
   labs(title="Vacant Buildings vs. Vandalism Reports per Grid Square") +
   ylab("# of Vandalism Reports") +
   xlab("# of Vacant Buildings") +
-  geom_smooth(method='lm', formula= y~x, formula = my.formula),
+  geom_smooth(method='lm', formula= y~x),
 ggplot(final_net, aes(x=HH_inc, y=countVandalism)) +
   geom_point(alpha=0.15) +
   labs(title="Household Income vs. Vandalism Reports per Grid Square") +
