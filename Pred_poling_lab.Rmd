@@ -2,9 +2,13 @@
 title: 'ML #3 Predictive Policing'
 author: "Michael Dunst and Sofia Fosullo"
 date: "10/21/2022"
-output: html_document
+output: 
+  html_document:
+    code_folding: hide
 ---
+## Introduction
 
+> The purpose of this project is to create an accurate model to predict a certain area's probability of a crime occuring within it. 
 
 
 ```{r setup, include=FALSE}
@@ -26,7 +30,7 @@ library(kableExtra)
 library(tidycensus)
 library(classInt)   # for KDE and ML risk class intervals
 library(caret)
-library(data.frame)
+library(stargazer)
 # functions
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
@@ -65,7 +69,7 @@ chicagoBoundary <-
   st_transform('ESRI:102271') 
 ```
 
-## visualizing point data
+## Visualizing Point Data
 
 Plotting point data and density
 
@@ -91,7 +95,7 @@ ggplot() +
   mapTheme(title_size = 14) + theme(legend.position = "none"))
 ```
 
-## Creating a fishnet grid
+> First, we create a fishnet grid to objectify the process by ensuring spatial data is being summarized over a uniform spatial division. In this case, this is a 500-meter square.
 
 
 ```{r}
@@ -144,7 +148,7 @@ ggplot() +
 > These features may be problematic for two reasons. One is that median household income is not point data, and is aggregated to census block groups which are not uniform in size or population, which may introduce spatial bias. Another reason is that vacancies and median household income were chosen for opposite reasoning. We assume vandalism to occur most on property with no value (vacancies are usually listed as $0 property value) but to be reported most on properties with higher value. This presents a contradiction.
 
 
-```{r}
+```{r echo = FALSE, results = 'hide' }
 ## only pulling a single variable for our model to keep it simple
 ## using Socrata again
 abandonCars <- 
@@ -163,7 +167,7 @@ neighborhoods <-
 
 ```
 
-```{r}
+```{r, results = 'hide'}
 #Pulling locations of vacant buildings
 vacantBldgs <- 
   read.socrata("https://data.cityofchicago.org/Buildings/Vacant-and-Abandoned-Buildings-Violations/kc9i-wq85") %>%
@@ -175,7 +179,7 @@ vacantBldgs <-
     mutate(Legend = "Vacant_Bldgs")
 ```
 
-```{r}
+```{r, results = 'hide'}
 #Getting median HH income by Census tract
 CHI_demo.sf <- 
   get_acs(geography = "block group", 
@@ -194,7 +198,9 @@ CHI_demo.sf <-
 
 #### How we aggregate a feature to our fishnet
 
-```{r}
+> We added data on abandoned car locations and vacant homes. Using our knowledge of urban planning, we assumed that crimes may cluster spatially, suggesting that car abandonment and vandalism occur in similar areas, and that vacant homes are more likely to be targets of property damage because repurcussions are less likely to be enforced over abandoned property.
+
+```{r, results = 'hide'}
 #Join count data
 vars_net <- abandonCars %>%
   st_join(fishnet, join=st_within) %>%
@@ -229,6 +235,8 @@ vars_net <- st_join(st_centroid(vars_net), CHI_demo.sf) %>%
 
 ## Mapping Median Household Income data
 
+>We wanted to include demographic data in our analysis, and we thought that median household income was a good measure of wealth in Philadelphia.
+
 ```{r}
 ggplot() +
       geom_sf(data = vars_net, aes(color=HH_inc)) +
@@ -239,7 +247,7 @@ ggplot() +
 
 ## Nearest Neighbor Feature
 
-> 
+> The nearest neighbor algorithm calculates the average proximity between a certain number of points and is a good measure of density of events, in our case crime events.
 
 ```{r}
 # convenience to reduce length of function names.
@@ -268,14 +276,12 @@ vars_net.longNn <-
 
 ## Join NN feature to our fishnet
 
-Since the counts were aggregated to each cell by `uniqueID` we can use that to join the counts to the fishnet.
+>By joining our nearest neighbor calculations to our fishnet grid, we can continue to calculate and display spatial data without summarizing data unevenly accross space.
 
-```{r}
+```{r fig.width=6, fig.height=4}
 ## important to drop the geometry from joining features
 final_net <-
   left_join(crime_net, st_drop_geometry(vars_net), by="uniqueID")
-
-View(final_net)
 
 grid.arrange(ncol=3,
 ggplot() +
@@ -299,7 +305,6 @@ ggplot() +
 
 ### Join in areal data
 
-
 ```{r}
 
 final_net <-
@@ -317,6 +322,7 @@ final_net <-
 
 ## Local Moran's I for fishnet grid cells
 
+> Moran's I is a good measure for spatial grouping of similar events.
 
 ```{r}
 ## generates warnings from PROJ issues
@@ -361,9 +367,7 @@ final_net.localMorans_vb <-
 
 ### Plotting local Moran's I results
 
-This is a complex code chunk - it's a loop which builds ggplots of local Moran's for each of your `vars`
-
-> What does a significant hot spot tell us about the distribution of burglaries?
+> By creating binary "hotspot" regions, we can more clearly display the clustering areas of groups of crime events. One helpful finding is that the central west region of Chicago contains hot spots for both abandoned cars and vacant buildings. 
 
 ```{r}
 ## This is just for plotting
@@ -382,7 +386,7 @@ for(i in vars){
 do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vandalism"))
 ```
 
-## Attempt to do the same thing with vacancies
+
 
 ```{r}
 ## This is just for plotting
@@ -404,6 +408,8 @@ do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Vand
 
 ##Scatter plot comparing independent and dependent variables
 
+> It appears that vacant homes are somewhat positively correlated with vandalism and that median household income is somewhat inversely correlated. 
+
 ```{r}
 #library(ggpmisc)
 grid.arrange(ncol=2,
@@ -421,6 +427,9 @@ ggplot(final_net, aes(x=HH_inc, y=countVandalism)) +
   geom_smooth(method='lm', formula= y~x))
 ```
 ##Histogram of our dependent variable
+
+> Our vacancy data is not normaly distributed. Instead, it is heavily skewed to the right. Our model assumes that this data is normal, so we tried to transform this variable to show a more normal distribution. We could not find a transformation that made this variable normally-distributed, so we kept it as it is.
+
 ```{r}
 grid.arrange(ncol=2,
 ggplot(final_net, aes(countVandalism)) + 
@@ -428,13 +437,12 @@ ggplot(final_net, aes(countVandalism)) +
 ggplot(final_net, aes(log(countVandalism))) + 
   geom_histogram(color="black", fill="white"))
 
-#We could not find a transformation that made this variable normally-distributed, so we kept it as it is.
 ```
 
 
 ## Distance to Hot spot
 
-Using NN distance to a hot spot location
+> We used nearest neighbor distance to a hot spot location. This essentially calculated the density around hotspot clusters of vandalism incidents.
 
 ```{r}
 # generates warning from NN
@@ -447,12 +455,13 @@ final_net <- final_net %>%
                                            abandoned.isSig == 1))), 
                        k = 1))
 
-## What does k = 1 represent?
 ```
 
-> What does `k = 1` above mean in terms of measuring nearest neighbors?
+
 
 ### Plot NN distance to hot spot
+
+> As shown in our hotspot graphs, we see a density around hot spots in the Central West and North West Chicago areas.
 
 ```{r}
 ggplot() +
@@ -464,9 +473,9 @@ ggplot() +
 
 ## Modeling and CV
 
-Leave One Group Out CV on spatial features
+> When using Leave One Group Out (LOOCV) on spatial features, we are able to plot an error or prediction term across space for each fishnet cell. We are also testing whether the accuracy of our model is generalizable or dependent on conditions of a specific test set.
 
-```{r sults='hide'}
+```{r results='hide', echo=FALSE}
 
 # View(crossValidate)
 
@@ -507,6 +516,8 @@ error_by_reg_and_fold %>%
 ```
 ## K-Fold Cross Validation
 
+> K-fold CV runs fewer prediction tests than LOOCV. Instead, it cross-validates the model in groups, or "folds". We were not able to map the spatial error of this test.
+
 ```{r}
 fitControl <- trainControl(method = "cv", number = 100)
 set.seed(825)
@@ -527,6 +538,7 @@ MAE.cv = data.table(MAE.cv= reg.cv$resample[,3])
 
 ## Mapping Error
 
+> Our error does not appear to be spatially clustered, and I would say that our model did not appear to be very spatially biased. However, there did appear to be some outliers.
 ```{r}
 ggplot() +
   geom_sf(data=error_by_reg_and_fold, aes(fill=MAE),color=NA) +
@@ -544,9 +556,6 @@ stargazer(data=MAE.cv,type="text")
 
 ## Density vs predictions
 
-The `spatstat` function gets us kernal density estimates with varying search radii.
-
-Note that the code here is *different* than in the book - it has been updated to keep up with changes in packages.
 
 ```{r}
 # demo of kernel width
@@ -585,7 +594,7 @@ as.data.frame(vandal_KD.1000) %>%
 
 ## Get 2018 crime data
 
-Let's see how our model performed relative to KD on the following year's data.
+We are comparing how our model performed relative to the following year's data.
 
 ```{r}
 vandalism18 <- 
@@ -626,8 +635,6 @@ vandal_KDE_sf <- vandal_KDE_sum %>%
   dplyr::select(label, Risk_Category, vandalCount)
 ```
 
-Note that this is different from the book, where we pull a model out of a list of models we've created. For your homework, you'll be creating multiple models.
-
 ```{r}
 ml_breaks <- classIntervals(reg.ss.spatialCV$Prediction, 
                              n = 5, "fisher")
@@ -648,7 +655,7 @@ vandal_risk_sf <-
   dplyr::select(label,Risk_Category, vandalCount)
 ```
 
-We don't do quite as well because we don't have very many features, but still pretty good.
+
 
 ```{r}
 rbind(vandal_KDE_sf, vandal_risk_sf) %>%
